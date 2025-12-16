@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Saglit-Usap</title>
+    <style>
+        :root {
+            --bg-color: #000000;
+            --text-color: #ffffff;
+            --accent-color: #333333;
+            --border-color: #444444;
+        }
+
+        body {
+            font-family: 'Courier New', Courier, monospace;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        header {
+            padding: 15px 20px;
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        h1 {
+            margin: 0;
+            font-size: 1.5rem;
+            letter-spacing: -1px;
+            font-weight: bold;
+        }
+
+        .status-bar {
+            font-size: 0.8rem;
+            color: #888;
+        }
+
+        #online-counter {
+            font-weight: bold;
+            color: #fff;
+        }
+
+        main {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            position: relative;
+        }
+
+        #video-container {
+            flex: 1;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: #111;
+            position: relative;
+            max-height: 50vh;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        video {
+            width: 50%;
+            height: 100%;
+            object-fit: cover;
+            background: #222;
+        }
+
+        #chat-container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background: #000;
+        }
+
+        #messages {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .message {
+            max-width: 80%;
+            padding: 8px 12px;
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            font-size: 0.9rem;
+        }
+
+        .message.stranger {
+            align-self: flex-start;
+            background: #111;
+        }
+
+        .message.you {
+            align-self: flex-end;
+            background: #222;
+            border-color: #666;
+        }
+
+        .system-msg {
+            align-self: center;
+            color: #666;
+            font-size: 0.8rem;
+            font-style: italic;
+        }
+
+        #controls {
+            padding: 15px;
+            border-top: 1px solid var(--border-color);
+            display: flex;
+            gap: 10px;
+        }
+
+        input[type="text"] {
+            flex: 1;
+            background: #111;
+            border: 1px solid var(--border-color);
+            color: #fff;
+            padding: 10px;
+            font-family: inherit;
+            outline: none;
+        }
+
+        button {
+            background: #fff;
+            color: #000;
+            border: none;
+            padding: 10px 20px;
+            font-weight: bold;
+            cursor: pointer;
+            font-family: inherit;
+            text-transform: uppercase;
+        }
+
+        button:hover {
+            background: #ccc;
+        }
+
+        button#stop-btn {
+            background: #000;
+            color: #fff;
+            border: 1px solid #fff;
+        }
+
+        #start-screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: #000;
+            z-index: 10;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+        }
+
+        #start-screen h2 {
+            font-weight: normal;
+            margin-bottom: 20px;
+        }
+
+        .footer {
+            margin-top: 20px;
+            font-size: 0.7rem;
+            color: #444;
+            text-transform: uppercase;
+        }
+
+        .location-badge {
+            font-size: 0.75rem;
+            color: #aaa;
+            margin-bottom: 5px;
+        }
+
+    </style>
+</head>
+<body>
+
+    <header>
+        <h1>Saglit-Usap</h1>
+        <div class="status-bar">Online: <span id="online-counter">0</span></div>
+    </header>
+
+    <main>
+        <div id="video-container">
+            <video id="localVideo" autoplay muted playsinline></video>
+            <video id="remoteVideo" autoplay playsinline></video>
+        </div>
+
+        <div id="chat-container">
+            <div id="messages"></div>
+            <div id="controls">
+                <input type="text" id="msg-input" placeholder="Type a message..." disabled>
+                <button id="send-btn" disabled>Send</button>
+                <button id="stop-btn">Next</button>
+            </div>
+        </div>
+
+        <div id="start-screen">
+            <h2>Anonymous Video Chat</h2>
+            <button id="start-btn">Start Chat</button>
+            <div class="footer">Developed by Jack</div>
+        </div>
+    </main>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket = io();
+        let localStream;
+        let peerConnection;
+        let currentRoomId = null;
+        let myLocation = "Unknown";
+
+        const config = {
+            iceServers: [
+                { urls: "stun:stun.l.google.com:19302" }
+            ]
+        };
+
+        const startScreen = document.getElementById('start-screen');
+        const startBtn = document.getElementById('start-btn');
+        const msgInput = document.getElementById('msg-input');
+        const sendBtn = document.getElementById('send-btn');
+        const messages = document.getElementById('messages');
+        const stopBtn = document.getElementById('stop-btn');
+        const localVideo = document.getElementById('localVideo');
+        const remoteVideo = document.getElementById('remoteVideo');
+        const onlineCounter = document.getElementById('online-counter');
+
+        fetch('https://ipapi.co/json/')
+            .then(res => res.json())
+            .then(data => {
+                myLocation = `${data.city}, ${data.country_name}`;
+            })
+            .catch(() => {
+                myLocation = "Earth";
+            });
+
+        socket.on('online-count', (count) => {
+            onlineCounter.innerText = count;
+        });
+
+        startBtn.addEventListener('click', async () => {
+            try {
+                localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+                localVideo.srcObject = localStream;
+                startScreen.style.display = 'none';
+                findPartner();
+            } catch (err) {
+                alert("Camera/Mic permission required.");
+            }
+        });
+
+        function findPartner() {
+            addSystemMessage("Searching for a partner...");
+            socket.emit('find-partner', { location: myLocation });
+        }
+
+        socket.on('partner-found', async ({ role, roomId, location }) => {
+            currentRoomId = roomId;
+            addSystemMessage(`Partner found from ${location || 'Unknown'}. Say hi!`);
+            
+            msgInput.disabled = false;
+            sendBtn.disabled = false;
+            
+            peerConnection = new RTCPeerConnection(config);
+            
+            localStream.getTracks().forEach(track => {
+                peerConnection.addTrack(track, localStream);
+            });
+
+            peerConnection.ontrack = (event) => {
+                remoteVideo.srcObject = event.streams[0];
+            };
+
+            peerConnection.onicecandidate = (event) => {
+                if (event.candidate) {
+                    socket.emit('signal', { roomId, signal: { type: 'candidate', candidate: event.candidate } });
+                }
+            };
+
+            if (role === 'initiator') {
+                const offer = await peerConnection.createOffer();
+                await peerConnection.setLocalDescription(offer);
+                socket.emit('signal', { roomId, signal: { type: 'offer', sdp: offer } });
+            }
+        });
+
+        socket.on('signal', async (data) => {
+            if (!peerConnection) return;
+
+            if (data.type === 'offer') {
+                await peerConnection.setRemoteDescription(new RTCSessionDescription(data.sdp));
+                const answer = await peerConnection.createAnswer();
+                await peerConnection.setLocalDescription(answer);
+                socket.emit('signal', { roomId: currentRoomId, signal: { type: 'answer', sdp: answer } });
+            } else if (data.type === 'answer') {
+                await peerConnection.setRemoteDescription(new RTCSessionDescription(data.sdp));
+            } else if (data.type === 'candidate') {
+                await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
+            }
+        });
+
+        socket.on('chat-message', (msg) => {
+            const div = document.createElement('div');
+            div.className = 'message stranger';
+            div.innerText = msg;
+            messages.appendChild(div);
+            messages.scrollTop = messages.scrollHeight;
+        });
+
+        sendBtn.addEventListener('click', sendMessage);
+        msgInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') sendMessage();
+        });
+
+        function sendMessage() {
+            const msg = msgInput.value;
+            if (!msg || !currentRoomId) return;
+
+            socket.emit('chat-message', { roomId: currentRoomId, message: msg });
+            
+            const div = document.createElement('div');
+            div.className = 'message you';
+            div.innerText = msg;
+            messages.appendChild(div);
+            messages.scrollTop = messages.scrollHeight;
+            msgInput.value = '';
+        }
+
+        stopBtn.addEventListener('click', () => {
+            if (peerConnection) peerConnection.close();
+            remoteVideo.srcObject = null;
+            msgInput.disabled = true;
+            sendBtn.disabled = true;
+            messages.innerHTML = '';
+            findPartner();
+        });
+
+        function addSystemMessage(text) {
+            const div = document.createElement('div');
+            div.className = 'system-msg';
+            div.innerText = text;
+            messages.appendChild(div);
+        }
+    </script>
+</body>
+  </html>
